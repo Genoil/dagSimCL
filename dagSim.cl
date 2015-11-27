@@ -18,7 +18,7 @@ static unsigned int fnv_reduce(uint4 v)
 }
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void dagSim(unsigned int search, __global unsigned int * num_results, __global hash128_t * dag)
+__kernel void dagSim(unsigned int search, __global unsigned int * num_results, __global hash128_t * dag, unsigned int num_dag_pages)
 {
 	__local unsigned int share[HASHES_PER_LOOP];
 
@@ -50,7 +50,7 @@ __kernel void dagSim(unsigned int search, __global unsigned int * num_results, _
 				if (update_share)
 				{
 					uint m[4] = { mix.x, mix.y, mix.z, mix.w };
-					share[hash_id] = fnv(init0 ^ (a + b), m[b]) % DAG_SIZE;
+					share[hash_id] = fnv(init0 ^ (a + b), m[b]) % num_dag_pages;
 				}
 				barrier(CLK_LOCAL_MEM_FENCE);
 				mix = dag[share[hash_id]].uint4s[thread_id];

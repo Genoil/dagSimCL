@@ -6,7 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-
+#include <iomanip>
 
 #include <CL/cl.h>
 
@@ -17,6 +17,8 @@ using namespace std;
 #define GRID_SIZE  8192
 #define BLOCK_SIZE 256
 #define MEGABYTE (1024 * 1024)
+#define STEP 128
+#define START 128
 #define THREADS_PER_HASH 8
 #define ACCESSES 64
 #define FNV_PRIME	0x01000193
@@ -73,29 +75,11 @@ static void addDefinition(string& _source, char const* _id, unsigned _value)
 
 int main(int argc, char *argv[])
 {
+	unsigned int max_buffer_size;
 	unsigned int buffer_size;
-	
-	if (argc > 1)
-		buffer_size = atoi(argv[1]) * MEGABYTE;
-	else
-		buffer_size = 1024 * MEGABYTE;
-
-	unsigned int * buffer = (unsigned int *)malloc(buffer_size);
 
 	printf("Genoil's DAGGER simulator\n");
 	printf("=========================\n");
-	printf("Generating pseudo-DAG of size %u bytes... (will take a few seconds)\n", buffer_size);
-	srand(time(NULL));
-
-	for (unsigned int i = 0; i < buffer_size / 4; i++) {
-		buffer[i] = random_uint();
-	}
-
-	unsigned int h_buffer_size = buffer_size / 128;
-	
-	unsigned int target;
-	target = random_uint();
-
 
 	cl_platform_id platforms[100];
 	cl_device_id devices[100];
@@ -108,11 +92,11 @@ int main(int argc, char *argv[])
 	printf("%d OpenCL platform(s) found: \n", platforms_n);
 	for (int i = 0; i < platforms_n; i++)
 	{
-		
+
 		CL_CHECK(clGetPlatformInfo(platforms[i], CL_PLATFORM_NAME, 10240, strbuf, NULL));
 		printf("%d: %s\n", i, strbuf);
 
-		
+
 		cl_uint devices_n = 0;
 		cl_int ret = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_GPU, 100, devices, &devices_n);
 		if (ret == CL_SUCCESS) {
@@ -123,6 +107,18 @@ int main(int argc, char *argv[])
 				cl_ulong buf_ulong;
 				CL_CHECK(clGetDeviceInfo(devices[j], CL_DEVICE_NAME, sizeof(strbuf), strbuf, NULL));
 				printf("%d: %s\n", j, strbuf);
+				CL_CHECK(clGetDeviceInfo(devices[j], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(buf_ulong), &buf_ulong, NULL));
+
+				if (argc > 1 && atoi(argv[1]) * MEGABYTE <= buf_ulong && atoi(argv[1]) < 4096) {
+					buf_ulong = atoi(argv[1]) * MEGABYTE;
+				}
+
+				if (buf_ulong > CL_UINT_MAX) {
+					max_buffer_size = CL_UINT_MAX;
+				}
+				else{
+					max_buffer_size = buf_ulong;
+				}
 			}
 			if (argc > 3 && atoi(argv[3]) == i) {
 				platform_id = atoi(argv[3]);
@@ -155,8 +151,21 @@ int main(int argc, char *argv[])
 
 	if (platforms_n == 0)
 		exit(-1);
-	
+
 	printf("Using device %d on platform %d\n", device_id, platform_id);
+
+
+	unsigned int * buffer = (unsigned int *)malloc(max_buffer_size);
+
+	printf("Generating pseudo-DAG of size %u bytes... (will take a minute)\n", max_buffer_size);
+	srand(time(NULL));
+
+	for (unsigned int i = 0; i < max_buffer_size / 4; i++) {
+		buffer[i] = random_uint();
+	}
+
+	unsigned int target;
+	
 
 	cl_context_properties contextProperties[] =
 	{
@@ -174,62 +183,88 @@ int main(int argc, char *argv[])
 	stringstream strStream;
 	strStream << inFile.rdbuf();
 	string code = strStream.str();
-	
+
 	printf("Loaded kernel source from %s\n", "./dagSim.cl");
 
 	addDefinition(code, "GROUP_SIZE", BLOCK_SIZE);
-	addDefinition(code, "DAG_SIZE", (unsigned)(buffer_size / 128));
 	addDefinition(code, "ACCESSES", ACCESSES);
 	const char * c = code.c_str();
 	const size_t l = code.length();
 
 	cl_program program;
-	program = clCreateProgramWithSource(context, 1, &c , &l,  &_err);
+	program = clCreateProgramWithSource(context, 1, &c, &l, &_err);
 	if (clBuildProgram(program, 1, devices, "", NULL, NULL) != CL_SUCCESS) {
 		clGetProgramBuildInfo(program, devices[device_id], CL_PROGRAM_BUILD_LOG, sizeof(strbuf), strbuf, NULL);
 		fprintf(stderr, "CL Compilation failed:\n%s", strbuf);
 		abort();
 	}
-	CL_CHECK(clUnloadCompiler());
-
-	cl_mem num_results = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &_err);
-
-	cl_mem dag = clCreateBuffer(context, CL_MEM_READ_ONLY, buffer_size, NULL, &_err);
-
 
 	cl_kernel kernel;
 	kernel = clCreateKernel(program, "dagSim", &_err);
 	CL_CHECK2(_err);
 
-	CL_CHECK(clSetKernelArg(kernel, 0, sizeof(target), &target));
-	CL_CHECK(clSetKernelArg(kernel, 1, sizeof(num_results), &num_results));
-	CL_CHECK(clSetKernelArg(kernel, 2, sizeof(dag), &dag));
-	
 	cl_command_queue queue;
 	queue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE, &_err);
-		
-	CL_CHECK(clEnqueueWriteBuffer(queue, dag, CL_TRUE, 0, buffer_size, buffer, NULL, NULL, NULL));
+
+
+	cl_mem num_results = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &_err);
 	
-	printf("Running kernel...\n");
-	clFinish(queue);
-	size_t g = GRID_SIZE * BLOCK_SIZE;
-	size_t w = BLOCK_SIZE;
-	cl_event e;
-	CL_CHECK(clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &g, &w, NULL, NULL, &e));
-	clWaitForEvents(1, &e);
+	cl_mem dag;
+	unsigned int num_dag_pages;
 
-	cl_ulong time_start, time_end;
-	double total_time;
+	filebuf csvfile;
+	csvfile.open("results.csv", std::ios::out);
+	ostream csvdata(&csvfile);
+	csvdata.imbue(std::locale(""));
+	csvdata << "DAG size (MB)\tBandwidth (GB/s)\tHashrate (MH/s)" << endl;
 
-	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_START, sizeof(time_start), &time_start, NULL);
-	clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_END, sizeof(time_end), &time_end, NULL);
-	total_time = time_end - time_start;
-	float ms = total_time / 1000000.0;
-	float hashes =  GRID_SIZE * BLOCK_SIZE;
+	for (buffer_size = START * MEGABYTE; buffer_size < max_buffer_size; buffer_size += (STEP * MEGABYTE)) {
+		cl_mem dag = clCreateBuffer(context, CL_MEM_READ_ONLY, buffer_size, NULL, &_err);
+		if (_err != CL_SUCCESS) {
+			printf("Out of memory. Bailing.\n");
+			break;
+		}
+		
+		printf("Running kernel with %dMB DAG...\n", buffer_size / MEGABYTE);
 
-	printf("\nExecution time:\t\t%0f ms\n", ms);
-	printf("Approximate hashrate:\t%0.1f MH/s\n", hashes / (1000.0 *ms));
-	printf("Achieved bandwith:\t%0.1f GB/s\n", (1000.0f / ms) * 16 * hashes * THREADS_PER_HASH * ACCESSES / static_cast<float>(1 << 30));
+		target = random_uint();
+		num_dag_pages = buffer_size / 128;
+
+		CL_CHECK(clSetKernelArg(kernel, 0, sizeof(target), &target));
+		CL_CHECK(clSetKernelArg(kernel, 1, sizeof(num_results), &num_results));
+		CL_CHECK(clSetKernelArg(kernel, 2, sizeof(dag), &dag));
+		CL_CHECK(clSetKernelArg(kernel, 3, sizeof(num_dag_pages), &num_dag_pages));
+		
+		CL_CHECK(clEnqueueWriteBuffer(queue, dag, CL_TRUE, 0, buffer_size, buffer, NULL, NULL, NULL));
+
+		
+		clFinish(queue);
+		size_t g = GRID_SIZE * BLOCK_SIZE;
+		size_t w = BLOCK_SIZE;
+		cl_event e;
+		CL_CHECK(clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &g, &w, NULL, NULL, &e));
+		clWaitForEvents(1, &e);
+
+		cl_ulong time_start, time_end;
+		double total_time;
+
+		clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_START, sizeof(time_start), &time_start, NULL);
+		clGetEventProfilingInfo(e, CL_PROFILING_COMMAND_END, sizeof(time_end), &time_end, NULL);
+		total_time = time_end - time_start;
+		double ms = total_time / 1000000.0;
+		double hashes = GRID_SIZE * BLOCK_SIZE;
+		double hashrate = hashes / (1000.0 *ms);
+		double bandwidth = (1000.0f / ms) * 16 * hashes * THREADS_PER_HASH * ACCESSES / static_cast<float>(1 << 30);
+		printf("Execution time:\t\t%0f ms\n", ms);
+		printf("Approximate hashrate:\t%0.1f MH/s\n", hashrate);
+		printf("Achieved bandwith:\t%0.1f GB/s\n\n", bandwidth);
+
+		csvdata << buffer_size / MEGABYTE << "\t" << bandwidth << "\t" << hashrate << endl;
+
+		CL_CHECK(clReleaseMemObject(dag));
+	}
+	printf("Writing CSV file\n");
+	csvfile.close();
 }
 
 

@@ -1,5 +1,4 @@
-#include "stdafx.h" 
-
+#include <stddef.h>
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -23,7 +22,12 @@ using namespace std;
 #define FNV_PRIME	0x01000193
 
 #define fnv(x,y) ((x) * FNV_PRIME ^(y))
-#define random() (rand() * rand())
+
+#if RAND_MAX == INT_MAX
+#define random_uint() (2 * rand() + (rand() & 0x1))
+#elif RAND_MAX == SHRT_MAX
+#define random_uint() (4 * (rand() * RAND_MAX + rand()) + (rand() & 0xff))
+#endif
 
 #define CL_CHECK(_expr)                                                         \
    do {                                                                         \
@@ -72,9 +76,9 @@ int main(int argc, char *argv[])
 	unsigned int buffer_size;
 	
 	if (argc > 1)
-	buffer_size = atoi(argv[1]) * MEGABYTE;
+		buffer_size = atoi(argv[1]) * MEGABYTE;
 	else
-	buffer_size = 1024 * MEGABYTE;
+		buffer_size = 1024 * MEGABYTE;
 
 	unsigned int * buffer = (unsigned int *)malloc(buffer_size);
 
@@ -84,13 +88,13 @@ int main(int argc, char *argv[])
 	srand(time(NULL));
 
 	for (unsigned int i = 0; i < buffer_size / 4; i++) {
-		buffer[i] = random();
+		buffer[i] = random_uint();
 	}
 
 	unsigned int h_buffer_size = buffer_size / 128;
 	
 	unsigned int target;
-	target = random();
+	target = random_uint();
 
 
 	cl_platform_id platforms[100];

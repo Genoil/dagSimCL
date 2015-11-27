@@ -159,7 +159,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dagSimCL.cpp" />
-    <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="dagSim.cl" />

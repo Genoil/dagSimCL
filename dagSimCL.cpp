@@ -79,9 +79,16 @@ int main(int argc, char *argv[])
 {
 	unsigned int max_buffer_size;
 	unsigned int buffer_size;
+	unsigned int chunk_size;
 
 	printf("Genoil's DAGGER simulator\n");
-	printf("=========================\n");
+	printf("=========================\n\n");
+	printf("usage:\n");
+	printf("dagSimCL <c> <m> <d> <p>\n");
+	printf("c: chunk size. Defaults to 256\n");
+	printf("m: max size. Defaults to max GPU RAM or 4096\n");
+	printf("d: device id. Defaults to 0\n");
+	printf("p: platform id. Defaults to 0\n\n");
 
 	cl_platform_id platforms[100];
 	cl_device_id devices[100];
@@ -111,8 +118,8 @@ int main(int argc, char *argv[])
 				printf("%d: %s\n", j, strbuf);
 				CL_CHECK(clGetDeviceInfo(devices[j], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(buf_ulong), &buf_ulong, NULL));
 
-				if (argc > 1 && atoi(argv[1]) * MEGABYTE <= buf_ulong && atoi(argv[1]) < 4096) {
-					buf_ulong = atoi(argv[1]) * MEGABYTE;
+				if (argc > 2 && ((atoi(argv[2]) * MEGABYTE) <= buf_ulong) && atoi(argv[2]) < 4096) {
+					buf_ulong = atoi(argv[2]) * MEGABYTE;
 				}
 
 				if (buf_ulong > CL_UINT_MAX) {
@@ -121,27 +128,34 @@ int main(int argc, char *argv[])
 				else{
 					max_buffer_size = buf_ulong;
 				}
+
+				if (argc > 1 && atoi(argv[1]) != 0) {
+					chunk_size = atoi(argv[1]) * MEGABYTE;
+				}
+				else {
+					chunk_size = 256;
+				}
 			}
-			if (argc > 3 && atoi(argv[3]) == i) {
-				platform_id = atoi(argv[3]);
+			if (argc > 4 && atoi(argv[4]) == i) {
+				platform_id = atoi(argv[4]);
 			}
 			else {
 				platform_id = i;
 			}
-			if (argc <= 2) {
+			if (argc <= 3) {
 				device_id = 0;
 			}
-			else if (argc > 2 && atoi(argv[2]) < devices_n) {
-				device_id = atoi(argv[2]);
+			else if (argc > 3 && atoi(argv[3]) < devices_n) {
+				device_id = atoi(argv[3]);
 			}
-			else if (argc > 2 && atoi(argv[2]) >= devices_n) {
+			else if (argc > 3 && atoi(argv[3]) >= devices_n) {
 				printf("   Invalid device id specified, using first device.\n");
 				device_id = 0;
 			}
 		}
 		else {
 			printf("   No GPU devices found on platform %d.\n", i);
-			if (argc > 1 && atoi(argv[1]) == i) {
+			if (argc > 4 && atoi(argv[4]) == i) {
 				if (platforms_n > 1) {
 					printf("   Try specifying a different platform id. ");
 				}
@@ -154,9 +168,10 @@ int main(int argc, char *argv[])
 	if (platforms_n == 0)
 		exit(-1);
 
+
+	printf("\nUsing %dMB chunks\n", chunk_size/MEGABYTE);
 	printf("Using device %d on platform %d\n", device_id, platform_id);
-
-
+	
 	unsigned int * buffer = (unsigned int *)malloc(max_buffer_size);
 
 	printf("Generating pseudo-DAG of size %u bytes... (will take a minute)\n", max_buffer_size);
@@ -211,8 +226,8 @@ int main(int argc, char *argv[])
 
 	cl_mem num_results = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &_err);
 	
-
-	cl_mem dag[8];
+	unsigned int max_chunks = max_buffer_size / chunk_size;
+	cl_mem * dag = new cl_mem[max_chunks];
 
 	unsigned int num_dag_pages;
 
@@ -225,11 +240,10 @@ int main(int argc, char *argv[])
 	unsigned int full_chunks, rest_size, chunk;
 
 	for (buffer_size = START * MEGABYTE; buffer_size < max_buffer_size; buffer_size += (STEP * MEGABYTE)) {
-		full_chunks = buffer_size / CHUNK_SIZE;
-		rest_size = buffer_size % CHUNK_SIZE;
+		full_chunks = buffer_size / chunk_size;
+		rest_size = buffer_size % chunk_size;
 		for (chunk = 0; chunk < full_chunks; chunk++) {
-			dag[chunk] = clCreateBuffer(context, CL_MEM_READ_ONLY, CHUNK_SIZE, NULL, &_err);
-			
+			dag[chunk] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
 		}
 
 		if (_err != CL_SUCCESS) {
@@ -238,7 +252,7 @@ int main(int argc, char *argv[])
 		}
 
 		if (rest_size > 0)
-			dag[full_chunks] = clCreateBuffer(context, CL_MEM_READ_ONLY, CHUNK_SIZE, NULL, &_err);
+			dag[full_chunks] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
 
 		if (_err != CL_SUCCESS) {
 			printf("Out of memory. Bailing.\n");
@@ -257,11 +271,11 @@ int main(int argc, char *argv[])
 		
 		for (chunk = 0; chunk < full_chunks; chunk++)
 		{
-			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, CHUNK_SIZE, buffer + chunk * CHUNK_SIZE / sizeof(unsigned int *), NULL, NULL, NULL);
+			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, chunk_size, buffer + chunk * chunk_size / sizeof(unsigned int *), NULL, NULL, NULL);
 		}
 		if (rest_size > 0)
 		{
-			_err = clEnqueueWriteBuffer(queue, dag[full_chunks], CL_TRUE, 0, rest_size, buffer + full_chunks * CHUNK_SIZE / sizeof(unsigned int *), NULL, NULL, NULL);
+			_err = clEnqueueWriteBuffer(queue, dag[full_chunks], CL_TRUE, 0, rest_size, buffer + full_chunks * chunk_size / sizeof(unsigned int *), NULL, NULL, NULL);
 		}
 		if (_err != CL_SUCCESS) {
 			printf("Out of memory. Bailing.\n");

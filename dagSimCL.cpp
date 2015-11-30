@@ -23,6 +23,8 @@ using namespace std;
 #define ACCESSES 64
 #define FNV_PRIME	0x01000193
 
+#define CHUNK_SIZE (256 * MEGABYTE)
+
 #define fnv(x,y) ((x) * FNV_PRIME ^(y))
 
 #if RAND_MAX == INT_MAX
@@ -209,7 +211,9 @@ int main(int argc, char *argv[])
 
 	cl_mem num_results = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &_err);
 	
-	cl_mem dag;
+
+	cl_mem dag[8];
+
 	unsigned int num_dag_pages;
 
 	filebuf csvfile;
@@ -218,8 +222,24 @@ int main(int argc, char *argv[])
 	csvdata.imbue(std::locale(""));
 	csvdata << "DAG size (MB)\tBandwidth (GB/s)\tHashrate (MH/s)" << endl;
 
+	unsigned int full_chunks, rest_size, chunk;
+
 	for (buffer_size = START * MEGABYTE; buffer_size < max_buffer_size; buffer_size += (STEP * MEGABYTE)) {
-		cl_mem dag = clCreateBuffer(context, CL_MEM_READ_ONLY, buffer_size, NULL, &_err);
+		full_chunks = buffer_size / CHUNK_SIZE;
+		rest_size = buffer_size % CHUNK_SIZE;
+		for (chunk = 0; chunk < full_chunks; chunk++) {
+			dag[chunk] = clCreateBuffer(context, CL_MEM_READ_ONLY, CHUNK_SIZE, NULL, &_err);
+			
+		}
+
+		if (_err != CL_SUCCESS) {
+			printf("Out of memory. Bailing.\n");
+			break;
+		}
+
+		if (rest_size > 0)
+			dag[full_chunks] = clCreateBuffer(context, CL_MEM_READ_ONLY, CHUNK_SIZE, NULL, &_err);
+
 		if (_err != CL_SUCCESS) {
 			printf("Out of memory. Bailing.\n");
 			break;
@@ -232,12 +252,22 @@ int main(int argc, char *argv[])
 
 		CL_CHECK(clSetKernelArg(kernel, 0, sizeof(target), &target));
 		CL_CHECK(clSetKernelArg(kernel, 1, sizeof(num_results), &num_results));
-		CL_CHECK(clSetKernelArg(kernel, 2, sizeof(dag), &dag));
-		CL_CHECK(clSetKernelArg(kernel, 3, sizeof(num_dag_pages), &num_dag_pages));
+		CL_CHECK(clSetKernelArg(kernel, 2, sizeof(num_dag_pages), &num_dag_pages));
+		CL_CHECK(clSetKernelArg(kernel, 3, sizeof(dag[0]), &dag[0]));
 		
-		CL_CHECK(clEnqueueWriteBuffer(queue, dag, CL_TRUE, 0, buffer_size, buffer, NULL, NULL, NULL));
+		for (chunk = 0; chunk < full_chunks; chunk++)
+		{
+			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, CHUNK_SIZE, buffer + chunk * CHUNK_SIZE / sizeof(unsigned int *), NULL, NULL, NULL);
+		}
+		if (rest_size > 0)
+		{
+			_err = clEnqueueWriteBuffer(queue, dag[full_chunks], CL_TRUE, 0, rest_size, buffer + full_chunks * CHUNK_SIZE / sizeof(unsigned int *), NULL, NULL, NULL);
+		}
+		if (_err != CL_SUCCESS) {
+			printf("Out of memory. Bailing.\n");
+			break;
+		}
 
-		
 		clFinish(queue);
 		size_t g = GRID_SIZE * BLOCK_SIZE;
 		size_t w = BLOCK_SIZE;
@@ -261,7 +291,11 @@ int main(int argc, char *argv[])
 
 		csvdata << buffer_size / MEGABYTE << "\t" << bandwidth << "\t" << hashrate << endl;
 
-		CL_CHECK(clReleaseMemObject(dag));
+		for (chunk = 0; chunk < full_chunks; chunk++)
+			CL_CHECK(clReleaseMemObject(dag[chunk]));
+
+		if (rest_size > 0)
+			CL_CHECK(clReleaseMemObject(dag[full_chunks]));
 	}
 	printf("Writing CSV file\n");
 	csvfile.close();

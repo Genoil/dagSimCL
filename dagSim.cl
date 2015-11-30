@@ -18,7 +18,7 @@ static unsigned int fnv_reduce(uint4 v)
 }
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void dagSim(unsigned int search, __global unsigned int * num_results, __global hash128_t * dag, unsigned int num_dag_pages)
+__kernel void dagSim(unsigned int search, __global unsigned int * num_results, unsigned int num_dag_pages, __global hash128_t * dag)
 {
 	__local unsigned int share[HASHES_PER_LOOP];
 

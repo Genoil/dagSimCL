@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
 					chunk_size = atoi(argv[1]) * MEGABYTE;
 				}
 				else {
-					chunk_size = 256;
+					chunk_size = 256 * MEGABYTE;
 				}
 			}
 			if (argc > 4 && atoi(argv[4]) == i) {

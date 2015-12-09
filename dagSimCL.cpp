@@ -7,6 +7,8 @@
 #include <sstream>
 #include <iostream>
 #include <iomanip>
+#include <cstring>
+#include <limits.h>
 
 #include <CL/cl.h>
 
@@ -112,7 +114,6 @@ int main(int argc, char *argv[])
 			printf("   %d OpenCL device(s) found on platform:\n", devices_n);
 			for (int j = 0; j < devices_n; j++)
 			{
-				cl_uint buf_uint;
 				cl_ulong buf_ulong;
 				CL_CHECK(clGetDeviceInfo(devices[j], CL_DEVICE_NAME, sizeof(strbuf), strbuf, NULL));
 				printf("%d: %s\n", j, strbuf);
@@ -171,7 +172,7 @@ int main(int argc, char *argv[])
 
 	printf("\nUsing %dMB chunks\n", chunk_size/MEGABYTE);
 	printf("Using device %d on platform %d\n", device_id, platform_id);
-	
+
 	unsigned int * buffer = (unsigned int *)malloc(max_buffer_size);
 
 	printf("Generating pseudo-DAG of size %u bytes... (will take a minute)\n", max_buffer_size);
@@ -182,7 +183,7 @@ int main(int argc, char *argv[])
 	}
 
 	unsigned int target;
-	
+
 
 	cl_context_properties contextProperties[] =
 	{
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
 
 
 	cl_mem num_results = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &_err);
-	
+
 	unsigned int max_chunks = max_buffer_size / chunk_size;
 	cl_mem * dag = new cl_mem[max_chunks];
 
@@ -258,7 +259,7 @@ int main(int argc, char *argv[])
 			printf("Out of memory. Bailing.\n");
 			break;
 		}
-		
+
 		printf("Running kernel with %dMB DAG...\n", buffer_size / MEGABYTE);
 
 		target = random_uint();
@@ -268,7 +269,7 @@ int main(int argc, char *argv[])
 		CL_CHECK(clSetKernelArg(kernel, 1, sizeof(num_results), &num_results));
 		CL_CHECK(clSetKernelArg(kernel, 2, sizeof(num_dag_pages), &num_dag_pages));
 		CL_CHECK(clSetKernelArg(kernel, 3, sizeof(dag[0]), &dag[0]));
-		
+
 		for (chunk = 0; chunk < full_chunks; chunk++)
 		{
 			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, chunk_size, buffer + chunk * chunk_size / sizeof(unsigned int *), NULL, NULL, NULL);

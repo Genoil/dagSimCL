@@ -119,8 +119,9 @@ int main(int argc, char *argv[])
 				printf("%d: %s\n", j, strbuf);
 				CL_CHECK(clGetDeviceInfo(devices[j], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(buf_ulong), &buf_ulong, NULL));
 
-				if (argc > 2 && ((atoi(argv[2]) * MEGABYTE) <= buf_ulong) && atoi(argv[2]) < 4096) {
-					buf_ulong = atoi(argv[2]) * MEGABYTE;
+				cl_uint buf_cmd = atoi(argv[2]);
+				if (argc > 2 && buf_cmd * MEGABYTE <= buf_ulong && buf_cmd < 4096) {
+					buf_ulong = buf_cmd * MEGABYTE;
 				}
 
 				if (buf_ulong > CL_UINT_MAX) {
@@ -240,25 +241,27 @@ int main(int argc, char *argv[])
 
 	unsigned int full_chunks, rest_size, chunk;
 
+	full_chunks = max_buffer_size / chunk_size;
+	rest_size = max_buffer_size % chunk_size;
+	for (chunk = 0; chunk < full_chunks; chunk++) {
+		dag[chunk] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
+	}
+
+	if (_err != CL_SUCCESS) {
+		printf("Out of memory. Bailing.\n");
+		exit(0);
+	}
+
+	if (rest_size > 0)
+		dag[full_chunks] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
+
+	if (_err != CL_SUCCESS) {
+		printf("Out of memory. Bailing.\n");
+		exit(0);
+	}
+
 	for (buffer_size = START * MEGABYTE; buffer_size < max_buffer_size; buffer_size += (STEP * MEGABYTE)) {
-		full_chunks = buffer_size / chunk_size;
-		rest_size = buffer_size % chunk_size;
-		for (chunk = 0; chunk < full_chunks; chunk++) {
-			dag[chunk] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
-		}
-
-		if (_err != CL_SUCCESS) {
-			printf("Out of memory. Bailing.\n");
-			break;
-		}
-
-		if (rest_size > 0)
-			dag[full_chunks] = clCreateBuffer(context, CL_MEM_READ_ONLY, chunk_size, NULL, &_err);
-
-		if (_err != CL_SUCCESS) {
-			printf("Out of memory. Bailing.\n");
-			break;
-		}
+		
 
 		printf("Running kernel with %dMB DAG...\n", buffer_size / MEGABYTE);
 
@@ -272,11 +275,11 @@ int main(int argc, char *argv[])
 
 		for (chunk = 0; chunk < full_chunks; chunk++)
 		{
-			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, chunk_size, buffer + chunk * chunk_size / sizeof(unsigned int *), NULL, NULL, NULL);
+			_err = clEnqueueWriteBuffer(queue, dag[chunk], CL_TRUE, 0, chunk_size, buffer + chunk * chunk_size, NULL, NULL, NULL);
 		}
 		if (rest_size > 0)
 		{
-			_err = clEnqueueWriteBuffer(queue, dag[full_chunks], CL_TRUE, 0, rest_size, buffer + full_chunks * chunk_size / sizeof(unsigned int *), NULL, NULL, NULL);
+			_err = clEnqueueWriteBuffer(queue, dag[full_chunks], CL_TRUE, 0, rest_size, buffer + full_chunks * chunk_size, NULL, NULL, NULL);
 		}
 		if (_err != CL_SUCCESS) {
 			printf("Out of memory. Bailing.\n");
@@ -305,13 +308,14 @@ int main(int argc, char *argv[])
 		printf("Achieved bandwith:\t%0.1f GB/s\n\n", bandwidth);
 
 		csvdata << buffer_size / MEGABYTE << "\t" << bandwidth << "\t" << hashrate << endl;
-
-		for (chunk = 0; chunk < full_chunks; chunk++)
-			CL_CHECK(clReleaseMemObject(dag[chunk]));
-
-		if (rest_size > 0)
-			CL_CHECK(clReleaseMemObject(dag[full_chunks]));
 	}
+	
+	for (chunk = 0; chunk < full_chunks; chunk++)
+		CL_CHECK(clReleaseMemObject(dag[chunk]));
+
+	if (rest_size > 0)
+		CL_CHECK(clReleaseMemObject(dag[full_chunks]));
+
 	printf("Writing CSV file\n");
 	csvfile.close();
 }
